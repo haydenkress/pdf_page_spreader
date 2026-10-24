@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#203b32"/><title>Folio — PDF Page Spreader</title></head>
+<body>
+<div id="app">
+  <header class="app-header"><a class="brand" href="./"><span class="brand-mark">◧</span> folio<span class="brand-tag">PDF PAGE SPREADER</span></a><span class="privacy"><span class="dot"></span> Local processing. Your books stay yours.</span></header>
+  <main>
+    <section class="intro"><div class="eyebrow">A LITTLE SPACE FOR YOUR LIBRARY</div><h1>One scan. Two perfect pages.</h1><p>Give your scanned books room to breathe. Frame each page, then split your PDF.</p></section>
+    <section id="drop-zone" class="upload"><div class="upload-icon">↥</div><div><h2>Bring your book here</h2><p>Drop a PDF, or choose one from your files. Nothing gets uploaded.</p></div><button id="open-file" class="primary">Choose PDFs <span>↗</span></button></section>
+    <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden/>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <section id="editor" hidden>
+      <div class="batch-bar"><label for="file-select">Your files</label><select id="file-select" aria-label="Active PDF"></select><button id="remove-file" class="subtle">Remove file</button></div>
+      <div class="document-bar"><div class="document-name"><span class="pdf-badge">PDF</span><div><h2 id="filename"></h2><p id="document-meta"></p></div></div><button id="replace-file" class="subtle">Add PDFs</button></div>
+      <div class="workspace">
+        <section class="preview-panel"><div class="panel-heading"><h2>Crop your scan</h2><span>Drag a frame or its corners to adjust</span></div>
+          <div class="canvas-stage" id="canvas-stage"><div id="page-surface"><canvas id="pdf-canvas"></canvas><div id="crop-overlay"></div></div><div id="render-loading" hidden>Rendering page…</div></div>
+          <div class="preview-toolbar"><div class="legend"><span class="left-dot"></span> Left page <span class="right-dot"></span> Right page</div><div class="pagination"><button id="previous" aria-label="Previous page">←</button><label>Scan <input id="page-number" type="number" min="1" value="1" aria-label="Scan number"/> <span id="page-count"></span></label><button id="next" aria-label="Next page">→</button></div></div>
+        </section>
+        <aside class="settings-panel"><div class="panel-heading"><h2>Fine-tune your frames</h2></div><p class="settings-help">Crops are saved for each scan. Start with one side, then adjust the other.</p>
+          <div class="side-tabs" role="group" aria-label="Crop selection"><button id="select-left" class="active" aria-pressed="true">Left page</button><button id="select-right" aria-pressed="false">Right page</button></div>
+          <div class="field-grid"><label>Left <span class="input-wrap"><input id="crop-x" type="number" min="0" max="99" step="0.1"/>%</span></label><label>Top <span class="input-wrap"><input id="crop-y" type="number" min="0" max="99" step="0.1"/>%</span></label><label>Width <span class="input-wrap"><input id="crop-w" type="number" min="1" max="100" step="0.1"/>%</span></label><label>Height <span class="input-wrap"><input id="crop-h" type="number" min="1" max="100" step="0.1"/>%</span></label></div>
+          <label class="order-label" for="page-range">Scans to split · applies to every file</label><input id="page-range" type="text" placeholder="e.g., 2-10, -10, or 10-" aria-describedby="range-help range-summary"/><p id="range-help" class="settings-help">Inclusive scan numbers, not printed book numbers. Use commas for multiple ranges. Other scans stay in the PDF unchanged. Ranges are limited to each file’s length.</p><p id="range-summary" role="status"></p>
+          <button id="apply-batch" class="outline full">Apply these frames to every file</button>
+          <button id="apply-all" class="outline full">Apply both frames to all scans</button><button id="reset" class="text-button full">Reset this scan to equal halves</button>
+          <label class="order-label" for="page-sizing">Split page size</label><select id="page-sizing"><option value="uniform">Uniform · half of first selected scan</option><option value="a4">A4 · 210 × 297 mm</option><option value="letter">US Letter · 8.5 × 11 in</option><option value="crop">Match each crop’s dimensions</option></select><p class="settings-help">Uniform pages fit and center each crop with white margins—no stretching or extra trimming. Unsplit scans stay unchanged. The same choice applies to every file.</p>
+          <div class="output-section"><div class="eyebrow">THE FINISHED PAGES</div><div class="output-previews"><figure><canvas id="left-preview"></canvas><figcaption>Left</figcaption></figure><span>→</span><figure><canvas id="right-preview"></canvas><figcaption>Right</figcaption></figure></div></div>
+          <label class="order-label" for="reading-order">Reading order</label><select id="reading-order"><option value="ltr">Left page → Right page</option><option value="rtl">Right page → Left page</option></select>
+          <button id="export" class="primary full">Split & download PDF <span>↓</span></button><p class="export-help">Selected scans split; other scans stay unchanged.<br/>Original PDF stays untouched.</p>
+        </aside>
+      </div>
+    </section>
+    <section id="empty-guide" class="empty-guide"><div><span class="step-number">01</span><h3>Open your book</h3><p>Choose a PDF of two-page scans.</p></div><div><span class="step-number">02</span><h3>Find the edges</h3><p>Adjust each frame to keep just the page.</p></div><div><span class="step-number">03</span><h3>Turn a new page</h3><p>Download clean, individual PDF pages.</p></div></section>
+    <footer><span>MADE FOR THE BOOKS WORTH KEEPING.</span><span>Private by design · Works in your browser</span></footer>
+  </main>
+</div><script type="module" src="/src/main.js"></script>
+</body></html>
