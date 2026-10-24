@@ -14,10 +14,16 @@ async function fixture() {
   }
   return Buffer.from(await doc.save());
 }
+async function startCropping(page) {
+  await expect(page.locator('#start-cropping')).toBeEnabled();
+  await page.locator('#start-cropping').click();
+  await expect(page.locator('#editor')).toBeVisible();
+  await expect(page.locator('#export')).toBeEnabled();
+}
 async function upload(page) {
   await page.goto('/');
   await page.locator('#file-input').setInputFiles({name:'book.pdf',mimeType:'application/pdf',buffer:await fixture()});
-  await expect(page.locator('#editor')).toBeVisible();
+  await startCropping(page);
   await expect(page.locator('#render-loading')).toBeHidden();
   await expect(page.locator('#export')).toBeEnabled();
   await page.locator('#page-sizing').selectOption('crop');
@@ -83,6 +89,8 @@ test('adding a second PDF retains the first and exports both in a ZIP',async({pa
   await upload(page);
   const doc=await PDFDocument.create(),p=doc.addPage([400,200]);p.drawText('Second book');
   await page.locator('#file-input').setInputFiles({name:'second.pdf',mimeType:'application/pdf',buffer:Buffer.from(await doc.save())});
+  await expect(page.locator('#file-list li')).toHaveCount(2);
+  await startCropping(page);await page.locator('#file-select').selectOption('1');
   await expect(page.locator('#filename')).toHaveText('second.pdf');await expect(page.locator('#export')).toBeEnabled();
   const downloaded=page.waitForEvent('download');await page.locator('#export').click();const file=await downloaded;
   expect(file.suggestedFilename()).toBe('folio-split-books.zip');
@@ -102,7 +110,7 @@ test('scanned image content survives custom crop export',async({page})=>{
   });
   const source=await PDFDocument.create(),imagePage=source.addPage([600,400]);const png=await source.embedPng(image);imagePage.drawImage(png,{x:0,y:0,width:600,height:400});
   await page.locator('#file-input').setInputFiles({name:'scan.pdf',mimeType:'application/pdf',buffer:Buffer.from(await source.save())});
-  await expect(page.locator('#export')).toBeEnabled();
+  await startCropping(page);
   await page.locator('#page-sizing').selectOption('crop');
   await page.locator('#crop-x').fill('5');await page.locator('#crop-x').press('Tab');
   await page.locator('#crop-y').fill('10');await page.locator('#crop-y').press('Tab');
@@ -119,7 +127,7 @@ test('batch ranges preserve other pages and shared crops persist across files',a
   await expect(page.locator('#notice')).toContainText('could not be opened');
   const buffer=await fixture();
   await page.locator('#file-input').setInputFiles(['a.pdf','b.pdf'].map(name=>({name,mimeType:'application/pdf',buffer})));
-  await expect(page.locator('#file-select option')).toHaveCount(2);await expect(page.locator('#export')).toBeEnabled();
+  await expect(page.locator('#file-select option')).toHaveCount(2);await startCropping(page);
   await page.locator('#page-sizing').selectOption('crop');
   await page.locator('#crop-w').fill('40');await page.locator('#crop-w').press('Tab');await page.locator('#apply-batch').click();
   await page.locator('#file-select').selectOption('0');await expect(page.locator('#export')).toBeEnabled();await expect(page.locator('#crop-w')).toHaveValue('40');
@@ -146,7 +154,7 @@ test('large scan images are shared: splitting stays near original file size',asy
   for(let i=0;i<3;i++){const p=source.addPage([800,500]);p.drawImage(jpg,{x:0,y:0,width:800,height:500});}
   const input=await source.save();
   await page.locator('#file-input').setInputFiles({name:'large-scans.pdf',mimeType:'application/pdf',buffer:Buffer.from(input)});
-  await expect(page.locator('#export')).toBeEnabled();
+  await startCropping(page);
   const downloaded=page.waitForEvent('download');await page.locator('#export').click();const output=await fs.readFile(await (await downloaded).path());
   expect((await PDFDocument.load(output)).getPageCount()).toBe(6);
   expect(output.length/input.length).toBeLessThan(1.02);
@@ -164,7 +172,7 @@ test('uniform export pads asymmetric crops without revealing neighboring content
   await page.goto('/');const source=await PDFDocument.create();
   const p=source.addPage([600,400]);p.drawRectangle({x:0,y:0,width:600,height:400,color:rgb(.9,.1,.1)});
   await page.locator('#file-input').setInputFiles({name:'uneven.pdf',mimeType:'application/pdf',buffer:Buffer.from(await source.save())});
-  await expect(page.locator('#export')).toBeEnabled();await expect(page.locator('#page-sizing')).toHaveValue('uniform');
+  await startCropping(page);await expect(page.locator('#page-sizing')).toHaveValue('uniform');
   await page.locator('#crop-x').fill('10');await page.locator('#crop-x').press('Tab');await page.locator('#crop-w').fill('20');await page.locator('#crop-w').press('Tab');
   const downloaded=page.waitForEvent('download');await page.locator('#export').click();const output=await fs.readFile(await (await downloaded).path());
   const pdf=await PDFDocument.load(output);for(const p of pdf.getPages())expect(p.getSize()).toEqual({width:300,height:400});
@@ -183,4 +191,38 @@ test('bundled JBIG2 and JPEG 2000 decoders are available to the renderer',async(
     for(const filename of ['jbig2.wasm','openjpeg.wasm']){const bytes=await factory.fetch({kind:'wasmUrl',filename});result.push(WebAssembly.validate(bytes));}
     return result;
   });expect(decoders).toEqual([true,true]);
+});
+
+test('files accumulate in a review list and require confirmation before cropping',async({page})=>{
+  await page.goto('/');
+  expect((await page.locator('#drop-zone').boundingBox()).height).toBeGreaterThanOrEqual(300);
+  const buffer=await fixture();
+  await page.locator('#file-input').setInputFiles({name:'first.pdf',mimeType:'application/pdf',buffer});
+  await expect(page.locator('#file-list li')).toHaveCount(1);await expect(page.locator('#editor')).toBeHidden();
+  const data=await page.evaluateHandle(bytes=>{
+    const transfer=new DataTransfer();transfer.items.add(new File([new Uint8Array(bytes)],'dropped.pdf',{type:'application/pdf'}));return transfer;
+  },Array.from(buffer));
+  await page.locator('#drop-zone').dispatchEvent('drop',{dataTransfer:data});await data.dispose();
+  await expect(page.locator('#file-list li')).toHaveCount(2);await expect(page.locator('#editor')).toBeHidden();
+  await page.getByRole('button',{name:'Remove first.pdf',exact:true}).click();
+  await expect(page.locator('#file-list li')).toHaveCount(1);await expect(page.locator('#file-list')).toContainText('dropped.pdf');
+  await page.screenshot({path:'/tmp/folio-file-review.png',fullPage:true});
+  await startCropping(page);await expect(page.locator('#filename')).toHaveText('dropped.pdf');
+  await page.locator('#crop-w').fill('40');await page.locator('#crop-w').press('Tab');
+  await page.locator('#replace-file').click();await expect(page.locator('#editor')).toBeHidden();
+  await page.locator('#file-input').setInputFiles({name:'third.pdf',mimeType:'application/pdf',buffer});
+  await expect(page.locator('#file-list li')).toHaveCount(2);await startCropping(page);
+  await expect(page.locator('#filename')).toHaveText('dropped.pdf');await expect(page.locator('#crop-w')).toHaveValue('40');
+});
+test('mobile review handles multi-select and removing every file',async({page})=>{
+  await page.setViewportSize({width:390,height:844});await page.goto('/');
+  const awaitBuffer=await fixture();
+  const chooser=page.waitForEvent('filechooser');await page.locator('#open-file').click();
+  await (await chooser).setFiles(['a.pdf','b.pdf'].map(name=>({name,mimeType:'application/pdf',buffer:awaitBuffer})));
+  await expect(page.locator('#file-list li')).toHaveCount(2);await expect(page.locator('#editor')).toBeHidden();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:'/tmp/folio-file-review-mobile.png',fullPage:true});
+  await page.getByRole('button',{name:'Remove a.pdf',exact:true}).click();await page.getByRole('button',{name:'Remove b.pdf',exact:true}).click();
+  await expect(page.locator('#file-review')).toBeHidden();await expect(page.locator('#start-cropping')).toBeDisabled();
+  await expect(page.locator('#drop-zone')).toBeVisible();await expect(page.locator('#editor')).toBeHidden();
 });

@@ -17,7 +17,7 @@ For a production build, run `npm run build`. The generated `dist/` directory can
 
 ## Split a book
 
-1. Choose one or more PDFs or drop them onto the app. Use the file selector to preview each book. Add or remove files without losing the other books.
+1. Drag one or more PDFs into the large upload box, or use **Choose PDF files** to open Finder or your device’s file picker. PDFs appear in a review list; add more or remove files until the list is ready, then click **Start cropping**. Nothing moves to the crop editor automatically. Use the editor’s file selector to preview each book. **Add or manage PDFs** returns to the list while retaining your crop edits.
 2. Drag the green **left page** and amber **right page** frames. Drag a corner to resize, or enter exact positions and dimensions as percentages of the visible scan.
 3. Navigate between scans. Each scan retains its own frames, including PDFs with mixed page sizes and rotations.
 4. Use **Apply both frames to all scans** for the active book, or **Apply these frames to every file** for the entire batch, then adjust individual scans as needed. This replaces all previous crop settings. **Reset this scan** restores only the current scan to equal halves.

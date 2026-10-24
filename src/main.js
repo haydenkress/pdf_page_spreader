@@ -7,7 +7,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { defaultCrops, copyCrops, constrainCrop, splitPdf, parseRanges, splitPageSize } from './pdf.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const $ = id => document.getElementById(id);
-const state = { files: [], fileIndex: -1, doc: null, docTask: null, bytes: null, name: '', page: 0, crops: [], views: [], side: 'left', rendering: false, exporting: false, loading: false, renderId: 0 };
+const state = { stage: 'upload', files: [], fileIndex: -1, doc: null, docTask: null, bytes: null, name: '', page: 0, crops: [], views: [], side: 'left', rendering: false, exporting: false, loading: false, renderId: 0 };
 let renderTask;
 function notice(message, error = false) {
   $('notice').textContent = message;
@@ -134,39 +134,34 @@ async function renderPage() {
   finally { if (id === state.renderId) { state.rendering=false; $('render-loading').hidden=true; navigation(); } }
 }
 async function openFile(file) {
-  if (!file || state.loading || state.exporting) return;
-  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') { notice('Please choose a PDF file.',true); return; }
-  state.loading=true; document.body.classList.add('busy'); notice('Opening your PDF…');
-  $('open-file').disabled=true; $('replace-file').disabled=true;
-  let newDoc, newTask;
+  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') return false;
+  let task;
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    // Keep a separate copy: PDF.js transfers ownership of its data to the worker.
-    const task = newTask = pdfjs.getDocument({data:bytes.slice(),...pdfOptions});
+    // PDF.js transfers its copy to the worker; retain the original for export.
+    task = pdfjs.getDocument({data:bytes.slice(),...pdfOptions});
     task.onPassword = () => task.destroy();
-    try { newDoc = await task.promise; } catch (error) {
-      throw new Error(error.name === 'PasswordException' || /destroyed/i.test(error.message) ? 'Password-protected PDFs are not supported. Open an unlocked copy instead.' : 'This PDF could not be opened. It may be damaged or encrypted.');
-    }
-    // pdf-lib must also be able to read the file before editing is offered.
+    const doc = await task.promise;
     await PDFDocument.load(bytes);
     const views=[],rotations=[];
-    for (let i=1;i<=newDoc.numPages;i++) { const page=await newDoc.getPage(i);views.push(page.view);rotations.push(page.rotate); }
-    if (renderTask) { renderTask.cancel(); try { await renderTask.promise; } catch {} }
-    saveCurrent();
-    Object.assign(state,{doc:newDoc,docTask:task,bytes,name:file.name,page:0,crops:Array.from({length:newDoc.numPages},defaultCrops),views,rotations,side:'left'});
-    state.files.push({doc:state.doc,docTask:task,bytes,name:file.name,page:0,crops:state.crops,views,rotations});
-    state.fileIndex=state.files.length-1;
-    refreshFiles();
-    newDoc=null; newTask=null;
-    $('filename').textContent = file.name;
-    $('document-meta').textContent = `${state.doc.numPages} scans · ${state.doc.numPages*2} output pages · ${(file.size/1024/1024).toFixed(1)} MB`;
-    $('page-count').textContent = `of ${state.doc.numPages}`; $('page-number').max=state.doc.numPages;
-    $('editor').hidden=false; $('empty-guide').hidden=true; $('drop-zone').hidden=true;
-    notice(''); selectSide('left'); await renderPage(); return true;
-  } catch (error) { if (newTask) await newTask.destroy(); notice(`${file.name}: ${error.message}`,true); return false; }
-  finally { state.loading=false; document.body.classList.remove('busy'); $('open-file').disabled=false; $('replace-file').disabled=false; $('file-input').value=''; }
+    for(let i=1;i<=doc.numPages;i++) {const page=await doc.getPage(i);views.push(page.view);rotations.push(page.rotate);}
+    state.files.push({doc,docTask:task,bytes,name:file.name,page:0,crops:Array.from({length:doc.numPages},defaultCrops),views,rotations});
+    refreshFiles();return true;
+  } catch {if(task) await task.destroy();return false;}
 }
-$('open-file').onclick = $('replace-file').onclick = () => { if (!state.exporting && !state.loading) $('file-input').click(); };
+function showUpload() {
+  saveCurrent();state.stage='upload';
+  $('editor').hidden=true;$('drop-zone').hidden=false;
+  refreshFiles();
+}
+$('open-file').onclick=()=>{if(!state.loading&&!state.exporting) $('file-input').click();};
+$('replace-file').onclick=()=>{if(!state.loading&&!state.exporting&&!state.rendering){notice('');showUpload();$('open-file').focus();}};
+$('start-cropping').onclick=async()=>{
+  if(!state.files.length||state.loading||state.rendering) return;
+  notice('');state.stage='crop';$('editor').hidden=false;$('drop-zone').hidden=true;$('file-review').hidden=true;$('empty-guide').hidden=true;
+  await activateFile(state.fileIndex>=0?state.fileIndex:0);
+  $('file-select').focus();
+};
 $('file-input').onchange = event => openFiles(Array.from(event.target.files));
 for (const type of ['dragenter','dragover']) document.addEventListener(type,event => {event.preventDefault();$('drop-zone').classList.add('dragging');});
 document.addEventListener('dragleave',event => {if (!event.relatedTarget) $('drop-zone').classList.remove('dragging');});
@@ -192,6 +187,18 @@ function refreshFiles() {
   }));
   $('file-select').value=state.fileIndex;
   $('export').innerHTML=state.files.length>1 ? 'Split & download all (ZIP) ↓' : 'Split & download PDF ↓';
+  $('file-review').hidden=state.stage!=='upload'||!state.files.length;
+  $('empty-guide').hidden=state.stage!=='upload'||!!state.files.length;
+  const scans=state.files.reduce((sum,file)=>sum+file.doc.numPages,0);
+  $('review-summary').textContent=`${state.files.length} PDF${state.files.length===1?'':'s'} · ${scans} scans · ready for your review`;
+  $('start-cropping').disabled=state.loading||!state.files.length;
+  $('file-list').replaceChildren(...state.files.map((file,i)=>{
+    const item=document.createElement('li'),badge=document.createElement('span'),details=document.createElement('div'),name=document.createElement('strong'),meta=document.createElement('span'),remove=document.createElement('button');
+    badge.className='pdf-badge';badge.textContent='PDF';details.className='review-file-details';name.textContent=file.name;
+    meta.textContent=`${file.doc.numPages} scans · ${(file.bytes.length/1024/1024).toFixed(1)} MB`;
+    details.append(name,meta);remove.className='subtle';remove.textContent='Remove';remove.setAttribute('aria-label',`Remove ${file.name}`);remove.disabled=state.loading;
+    remove.onclick=()=>removeFile(i);item.append(badge,details,remove);return item;
+  }));
 }
 function rangeSummary() {
   if (!state.doc) return;
@@ -208,10 +215,20 @@ function rangeSummary() {
 $('page-range').oninput=()=>{navigation();updateFrames();};
 $('page-sizing').onchange=()=>{updateFrames();};
 async function openFiles(files) {
-  if(state.loading || state.exporting) return;
+  if(state.loading||state.exporting||state.rendering||!files.length) return;
+  showUpload();state.loading=true;document.body.classList.add('busy');
+  $('drop-zone').setAttribute('aria-busy','true');$('open-file').disabled=true;refreshFiles();
   const failed=[];
-  for(const file of files) if(!await openFile(file)) failed.push(file.name);
-  if(failed.length) notice(`These files could not be opened: ${failed.join(', ')}. They may be damaged, encrypted, or not PDFs. Other files remain available.`,true);
+  try {
+    for(const [i,file] of files.entries()) {
+      notice(`Opening PDF ${i+1} of ${files.length}: ${file.name}…`);
+      if(!await openFile(file)) failed.push(file.name);
+    }
+    if(failed.length) notice(`These files could not be opened: ${failed.join(', ')}. They may be damaged, encrypted, or not PDFs. Other files remain available.`,true);
+    else notice('');
+  } finally {
+    state.loading=false;document.body.classList.remove('busy');$('drop-zone').setAttribute('aria-busy','false');$('open-file').disabled=false;$('file-input').value='';refreshFiles();
+  }
 }
 async function activateFile(index) {
   if(state.loading || state.exporting || state.rendering) { $('file-select').value=state.fileIndex;return; }
@@ -223,14 +240,16 @@ async function activateFile(index) {
   refreshFiles();await renderPage();
 }
 $('file-select').onchange=event=>activateFile(Number(event.target.value));
-$('remove-file').onclick=async()=>{
-  if(state.loading || state.exporting || state.rendering) return;
-  const [removed]=state.files.splice(state.fileIndex,1);state.fileIndex=-1;
-  if(renderTask) {renderTask.cancel();try{await renderTask.promise;}catch{}}
-  await removed.docTask.destroy();
-  if(state.files.length) await activateFile(0);
-  else { state.doc=null;$('editor').hidden=true;$('drop-zone').hidden=false;$('empty-guide').hidden=false;notice(''); }
-};
+async function removeFile(index) {
+  if(state.loading||state.exporting||state.rendering) return;
+  saveCurrent();const [removed]=state.files.splice(index,1);
+  if(index===state.fileIndex) {state.fileIndex=-1;state.doc=null;}
+  else if(index<state.fileIndex) state.fileIndex--;
+  await removed.docTask.destroy();refreshFiles();
+  if(!state.files.length) {showUpload();notice('');}
+  else if(state.stage==='crop'&&state.fileIndex<0) await activateFile(0);
+}
+$('remove-file').onclick=()=>removeFile(state.fileIndex);
 $('apply-batch').onclick=()=>{
   const crops=copyCrops(state.crops[state.page]);saveCurrent();
   for(const file of state.files) file.crops=file.crops.map(()=>copyCrops(crops));
