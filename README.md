@@ -18,13 +18,13 @@ For a production build, run `npm run build`. The generated `dist/` directory can
 ## Split a book
 
 1. Drag one or more PDFs into the large upload box, or use **Choose PDF files** to open Finder or your device’s file picker. PDFs appear in a review list; add more or remove files until the list is ready, then click **Start cropping**. Nothing moves to the crop editor automatically. Use the editor’s file selector to preview each book. **Add or manage PDFs** returns to the list while retaining your crop edits.
-2. Drag the green **left page** and amber **right page** frames. Drag a corner to resize, or enter exact positions and dimensions as percentages of the visible scan.
+2. Drag the green **left page** and amber **right page** frames. Drag a corner to resize, or enter exact positions and dimensions as percentages of the visible scan. To straighten slanted pages, drag the round handle above either frame, or use **Tilt selected page** (−15° to +15°, in 0.1° steps). Align the frame with the slanted text; the output thumbnails and export straighten the content inside it. Each side has its own angle.
 3. Navigate between scans. Each scan retains its own frames, including PDFs with mixed page sizes and rotations.
-4. Use **Apply both frames to all scans** for the active book, or **Apply these frames to every file** for the entire batch, then adjust individual scans as needed. This replaces all previous crop settings. **Reset this scan** restores only the current scan to equal halves.
+4. Use **Apply both frames to all scans** for the active book, or **Apply these frames to every file** for the entire batch, then adjust individual scans as needed. This replaces all previous crop settings, including tilt. **Reset this scan** restores only the current scan to equal halves.
 5. Enter inclusive scan ranges such as `3-8`, `-8` (1 through 8), `8-` (8 through the end), or `1, 3-8, 12-`. Blank means all scans. The same expression applies to every file and is limited to each file’s length. Scans outside the range remain in order and unchanged; selected scans become two pages. A range beyond the end selects nothing.
 6. Choose left-to-right or right-to-left reading order. One input downloads as a PDF; multiple inputs download together as a ZIP of separate PDFs.
 
-You can focus a crop frame with Tab. Arrow keys move it; Shift + arrow keys resize it; Alt makes adjustments smaller.
+You can focus a crop frame with Tab. Arrow keys move it; Shift + arrow keys resize it; Alt makes adjustments smaller. Focus the round rotation handle and use arrow keys to adjust tilt by 0.1°, Shift + arrow for 1°, or Home to reset. **Reset tilt** levels just the selected frame.
 
 PDF processing happens entirely in the browser using locally bundled PDF.js and pdf-lib. There is no upload service, external font service, analytics, or required API key. Export reuses the original PDF content and scanned images without rasterizing the pages again. The original file is unchanged.
 
@@ -42,7 +42,7 @@ Browser tests use `/usr/bin/chromium` when available. Else install Playwright's 
 
 - Password-protected PDFs must be unlocked before importing.
 - Files and crop settings are held in memory. Refreshing or removing a PDF discards its edits; very large PDFs depend on available browser memory.
-- This is rectangular cropping and splitting, without OCR, deskewing, curved-page correction, or automatic gutter detection.
+- This is rectangular cropping and splitting, with manual tilt correction, without OCR, automatic skew detection, curved-page correction, or automatic gutter detection.
 - The export creates new pages. Interactive annotations, bookmarks, forms, and document metadata are not carried over. Existing text content is retained where it is part of the PDF page content.
 - Cropping is **not secure redaction**. Underlying content outside the visible crop can remain embedded in the exported file.
 
@@ -82,3 +82,10 @@ Use **Split page size → Uniform** (the default) to give every split page in a 
 For scans that drift, first set a good pair of frames and apply them to the book or batch. Then move or resize frames on individual scans to follow the page edges; output dimensions stay fixed. **Match each crop’s dimensions** restores tight pages with no uniform-size padding. Scans outside the split range retain their original dimensions.
 
 JBIG2 and JPEG 2000 image decoders are bundled locally, including in the standalone HTML. No CDN is needed to preview scans using these formats. Third-party notices are supplied in `public/THIRD_PARTY_NOTICES.txt` and embedded in the standalone document.
+
+
+### Where white space is added
+
+After straightening a crop, Folio scales it proportionally to fit the selected page size. It centers the result, dividing the remaining space equally between the left and right margins or the top and bottom margins. There is no forced margin or stretching; one dimension fills the output page. Existing white space inside a scan remains part of that scan. Selecting **Match each crop’s dimensions** removes this extra page-size padding.
+
+Tilted frames can extend beyond the source scan; those areas also become white, because there is no original content there. Move or resize the frame to keep those areas out if desired. Tilt correction changes PDF placement, not the image resolution or compression, and both sides still reuse the original scan data.

@@ -4,7 +4,7 @@ import * as pdfjs from 'pdfjs-dist';
 import { zipSync } from 'fflate';
 import { PDFDocument } from 'pdf-lib';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { defaultCrops, copyCrops, constrainCrop, splitPdf, parseRanges, splitPageSize } from './pdf.js';
+import { defaultCrops, copyCrops, constrainCrop, splitPdf, parseRanges, splitPageSize, resizeCrop } from './pdf.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const $ = id => document.getElementById(id);
 const state = { stage: 'upload', files: [], fileIndex: -1, doc: null, docTask: null, bytes: null, name: '', page: 0, crops: [], views: [], side: 'left', rendering: false, exporting: false, loading: false, renderId: 0 };
@@ -41,10 +41,11 @@ function updateFrames() {
     frame.style.top = `${rect.y*100}%`;
     frame.style.width = `${rect.w*100}%`;
     frame.style.height = `${rect.h*100}%`;
+    frame.style.transform = `rotate(${rect.angle||0}deg)`;
     frame.classList.toggle('selected',state.side===side);
-    frame.setAttribute('aria-label',`${side} page crop. Use arrow keys to move, Shift and arrow keys to resize.`);
+    frame.setAttribute('aria-label',`${side} page crop. Use arrow keys to move, Shift and arrow keys to resize. Use the tilt handle or tilt controls to straighten.`);
     const source = $('pdf-canvas'), target = $(`${side}-preview`);
-    const w = Math.max(1,Math.round(source.width*rect.w)), h = Math.max(1,Math.round(source.height*rect.h));
+    const w=source.width*rect.w,h=source.height*rect.h;
     let targetSize=null;
     try {const selected=parseRanges($('page-range').value,state.doc.numPages), first=Math.min(...selected);
       if(Number.isFinite(first)) targetSize=splitPageSize(state.views[first],state.rotations[first],$('page-sizing').value);
@@ -53,8 +54,12 @@ function updateFrames() {
     target.width = Math.max(1,Math.min(600,Math.round(180*ratio))); target.height = 180;
     const ctx=target.getContext('2d'),scale=Math.min(target.width/w,target.height/h);
     ctx.fillStyle='#fff';ctx.fillRect(0,0,target.width,target.height);
-    ctx.drawImage(source,source.width*rect.x,source.height*rect.y,w,h,(target.width-w*scale)/2,(target.height-h*scale)/2,w*scale,h*scale);
+    ctx.save();ctx.beginPath();ctx.rect((target.width-w*scale)/2,(target.height-h*scale)/2,w*scale,h*scale);ctx.clip();
+    ctx.translate(target.width/2,target.height/2);ctx.scale(scale,scale);ctx.rotate(-(rect.angle||0)*Math.PI/180);
+    ctx.translate(-(rect.x+rect.w/2)*source.width,-(rect.y+rect.h/2)*source.height);ctx.drawImage(source,0,0);ctx.restore();
   }
+  $('crop-angle').value=crops[state.side].angle||0;
+  $('crop-angle-number').value=Number((crops[state.side].angle||0).toFixed(1));
   for (const key of ['x','y','w','h']) $(`crop-${key}`).value = Number((crops[state.side][key]*100).toFixed(1));
 }
 for (const side of ['left','right']) {
@@ -63,9 +68,18 @@ for (const side of ['left','right']) {
   frame.dataset.side = side;
   frame.tabIndex = 0;
   frame.setAttribute('role','group');
-  frame.innerHTML = `<span class="crop-label">${side.toUpperCase()} PAGE</span>${['nw','ne','sw','se'].map(h=>`<span class="handle" data-handle="${h}" aria-hidden="true"></span>`).join('')}`;
+  frame.innerHTML = `<span class="crop-label">${side.toUpperCase()} PAGE</span><button type="button" class="rotation-handle" data-handle="rotate" aria-label="Rotate ${side} page crop" title="Drag to tilt; arrow keys adjust; Home resets"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 10a8 8 0 1 0-1 7M20 4v6h-6"/></svg></button>${['nw','ne','sw','se'].map(h=>`<span class="handle" data-handle="${h}" aria-hidden="true"></span>`).join('')}`;
   $('crop-overlay').append(frame);
   frame.addEventListener('focus',() => selectSide(side));
+  const rotationHandle=frame.querySelector('.rotation-handle');
+  rotationHandle.addEventListener('focus',()=>selectSide(side));
+  rotationHandle.addEventListener('keydown',event=>{
+    if(state.rendering||state.exporting||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home'].includes(event.key))return;
+    event.preventDefault();event.stopPropagation();
+    const rect=state.crops[state.page][side],delta=event.shiftKey?1:.1;
+    const angle=event.key==='Home'?0:(rect.angle||0)+(['ArrowRight','ArrowDown'].includes(event.key)?delta:-delta);
+    state.crops[state.page][side]=constrainCrop({...rect,angle});updateFrames();
+  });
   frame.addEventListener('keydown',event => {
     if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) || state.rendering || state.exporting) return;
     event.preventDefault();
@@ -90,8 +104,11 @@ $('crop-overlay').addEventListener('pointerdown',event => {
   if (!frame || state.rendering || state.exporting || event.button !== 0) return;
   event.preventDefault();
   selectSide(frame.dataset.side);
-  frame.focus({preventScroll:true});
-  drag = { id:event.pointerId, side:frame.dataset.side, startX:event.clientX, startY:event.clientY, rect:{...state.crops[state.page][frame.dataset.side]}, handle:event.target.dataset.handle, bounds:$('crop-overlay').getBoundingClientRect() };
+  (event.target.closest('.rotation-handle')||frame).focus({preventScroll:true});
+  drag = { id:event.pointerId, side:frame.dataset.side, startX:event.clientX, startY:event.clientY, rect:{...state.crops[state.page][frame.dataset.side]}, handle:event.target.closest('[data-handle]')?.dataset.handle, bounds:$('crop-overlay').getBoundingClientRect() };
+  drag.centerX=drag.bounds.left+(drag.rect.x+drag.rect.w/2)*drag.bounds.width;
+  drag.centerY=drag.bounds.top+(drag.rect.y+drag.rect.h/2)*drag.bounds.height;
+  drag.startAngle=Math.atan2(event.clientY-drag.centerY,event.clientX-drag.centerX);
   $('crop-overlay').setPointerCapture(event.pointerId);
 });
 $('crop-overlay').addEventListener('pointermove',event => {
@@ -101,11 +118,11 @@ $('crop-overlay').addEventListener('pointermove',event => {
   if (!drag.handle) {
     rect.x = Math.max(0,Math.min(1-rect.w,rect.x+dx));
     rect.y = Math.max(0,Math.min(1-rect.h,rect.y+dy));
+  } else if(drag.handle==='rotate') {
+    const angle=Math.atan2(event.clientY-drag.centerY,event.clientX-drag.centerX)-drag.startAngle;
+    rect.angle=Math.round(((original.angle||0)+Math.atan2(Math.sin(angle),Math.cos(angle))*180/Math.PI)*10)/10;
   } else {
-    if (drag.handle.includes('w')) { rect.x=Math.max(0,Math.min(original.x+original.w-.01,original.x+dx)); rect.w=original.x+original.w-rect.x; }
-    if (drag.handle.includes('e')) rect.w=Math.max(.01,Math.min(1-original.x,original.w+dx));
-    if (drag.handle.includes('n')) { rect.y=Math.max(0,Math.min(original.y+original.h-.01,original.y+dy)); rect.h=original.y+original.h-rect.y; }
-    if (drag.handle.includes('s')) rect.h=Math.max(.01,Math.min(1-original.y,original.h+dy));
+    Object.assign(rect,resizeCrop(original,drag.handle,dx,dy,drag.bounds.width,drag.bounds.height));
   }
   state.crops[state.page][drag.side] = constrainCrop(rect); updateFrames();
 });
@@ -116,6 +133,12 @@ for (const key of ['x','y','w','h']) $(`crop-${key}`).addEventListener('change',
   if (Number.isFinite(value)) state.crops[state.page][state.side] = constrainCrop({...state.crops[state.page][state.side],[key]:value/100});
   updateFrames();
 });
+for(const id of ['crop-angle','crop-angle-number']) $(id).addEventListener(id==='crop-angle'?'input':'change',event=>{
+  const angle=event.target.valueAsNumber;
+  if(Number.isFinite(angle))state.crops[state.page][state.side]=constrainCrop({...state.crops[state.page][state.side],angle});
+  updateFrames();
+});
+$('reset-angle').onclick=()=>{state.crops[state.page][state.side].angle=0;updateFrames();};
 async function renderPage() {
   const id = ++state.renderId;
   if (renderTask) { renderTask.cancel(); try { await renderTask.promise; } catch {} }

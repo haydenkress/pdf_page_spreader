@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PDFDocument, degrees, rgb } from 'pdf-lib';
-import { defaultCrops, copyCrops, constrainCrop, cropBounds, splitPdf, parseRanges } from '../../src/pdf.js';
+import { defaultCrops, copyCrops, constrainCrop, cropBounds, splitPdf, parseRanges, resizeCrop } from '../../src/pdf.js';
 
 test('crop normalization keeps rectangles inside the scan', () => {
-  assert.deepEqual(constrainCrop({x:-1,y:2,w:5,h:-1}),{x:0,y:.99,w:1,h:.01});
+  assert.deepEqual(constrainCrop({x:-1,y:2,w:5,h:-1}),{x:0,y:.99,w:1,h:.01,angle:0});
   const rect = constrainCrop({x:NaN,y:Infinity,w:NaN,h:Infinity});
-  assert.deepEqual(rect,{x:0,y:0,w:.5,h:1});
+  assert.deepEqual(rect,{x:0,y:0,w:.5,h:1,angle:0});
   const original = defaultCrops(), copy=copyCrops(original); copy.left.x=.1;
   assert.equal(original.left.x,0);
 });
@@ -65,4 +65,14 @@ test('uniform pages fit varied crops and rotations onto one shared page size',as
     const output=await PDFDocument.load(await splitPdf(bytes,crops,views,'ltr',()=>{},'',{sizing}));
     for(const p of output.getPages())assert.deepEqual([p.getWidth(),p.getHeight()],size);
   }
+});
+
+test('tilt is bounded and rotated resizing holds the opposite corner in place',()=>{
+  assert.equal(constrainCrop({...defaultCrops().left,angle:99}).angle,15);
+  assert.equal(constrainCrop({...defaultCrops().left,angle:-99}).angle,-15);
+  const original={x:.25,y:.2,w:.3,h:.5,angle:7};
+  const nw=c=>{const a=c.angle*Math.PI/180,cx=(c.x+c.w/2)*800,cy=(c.y+c.h/2)*500;return [cx-Math.cos(a)*c.w*800/2+Math.sin(a)*c.h*500/2,cy-Math.sin(a)*c.w*800/2-Math.cos(a)*c.h*500/2];};
+  const resized=resizeCrop(original,'se',.03,.02,800,500);
+  assert.ok(resized.w>original.w);assert.equal(resized.angle,7);
+  nw(original).forEach((v,i)=>assert.ok(Math.abs(v-nw(resized)[i])<1e-8));
 });

@@ -226,3 +226,58 @@ test('mobile review handles multi-select and removing every file',async({page})=
   await expect(page.locator('#file-review')).toBeHidden();await expect(page.locator('#start-cropping')).toBeDisabled();
   await expect(page.locator('#drop-zone')).toBeVisible();await expect(page.locator('#editor')).toBeHidden();
 });
+
+test('tilt handle and precision controls persist, copy, and reset per page',async({page})=>{
+  await upload(page);
+  await page.locator('#crop-angle-number').fill('4.5');await page.locator('#crop-angle-number').press('Tab');
+  await expect(page.locator('.crop-frame.left')).toHaveCSS('transform',/matrix/);
+  await page.locator('#next').click();await expect(page.locator('#export')).toBeEnabled();await expect(page.locator('#crop-angle-number')).toHaveValue('0');
+  await page.locator('#previous').click();await expect(page.locator('#export')).toBeEnabled();await expect(page.locator('#crop-angle-number')).toHaveValue('4.5');
+  const handle=page.getByRole('button',{name:'Rotate left page crop'});await handle.scrollIntoViewIfNeeded();const box=await handle.boundingBox();
+  await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width/2+20,box.y+box.height/2);await page.mouse.up();
+  const angle=Number(await page.locator('#crop-angle-number').inputValue());expect(angle).toBeGreaterThan(4.5);
+  await handle.focus();await page.keyboard.press('ArrowRight');expect(Number(await page.locator('#crop-angle-number').inputValue())).toBeCloseTo(angle+.1,1);
+  await page.locator('#apply-all').click();await page.locator('#next').click();await expect(page.locator('#export')).toBeEnabled();expect(Number(await page.locator('#crop-angle-number').inputValue())).toBeCloseTo(angle+.1,1);
+  await page.locator('#select-right').click();await expect(page.locator('#crop-angle-number')).toHaveValue('0');
+  await page.locator('#select-left').click();await page.locator('#reset-angle').click();await expect(page.locator('#crop-angle-number')).toHaveValue('0');
+});
+test('tilted crops export horizontal content for both tilt directions and every PDF rotation',async({page})=>{
+  test.setTimeout(120000);
+  const source=await PDFDocument.create(),angles=[];
+  for(const rotation of [0,90,180,270]) for(const angle of [6,-7]) {
+    angles.push(angle);const p=source.addPage([800,600]);p.setCropBox(20,30,760,540);p.setRotation(degrees(rotation));
+    const [vw,vh]=rotation%180?[540,760]:[760,540],cx=.275*vw,cy=.5*vh,theta=angle*Math.PI/180;
+    const point=x=>{
+      const u=cx+Math.cos(theta)*x,v=cy+Math.sin(theta)*x;
+      if(rotation===90)return{x:20+v,y:30+u};
+      if(rotation===180)return{x:780-u,y:30+v};
+      if(rotation===270)return{x:780-v,y:570-u};
+      return{x:20+u,y:570-v};
+    };
+    p.drawLine({start:point(-.105*vw),end:point(.105*vw),thickness:8,color:rgb(0,0,0)});
+  }
+  await page.goto('/');await page.locator('#file-input').setInputFiles({name:'tilted.pdf',mimeType:'application/pdf',buffer:Buffer.from(await source.save())});await startCropping(page);
+  for(const [key,value] of [['x','10'],['y','10'],['w','35'],['h','80']]){await page.locator('#crop-'+key).fill(value);await page.locator('#crop-'+key).press('Tab');}
+  await page.locator('#apply-all').click();
+  for(let i=0;i<angles.length;i++){
+    if(i){await page.locator('#next').click();await expect(page.locator('#export')).toBeEnabled();}
+    await page.locator('#crop-angle-number').fill(String(angles[i]));await page.locator('#crop-angle-number').press('Tab');
+    const slope=await page.evaluate(()=>{
+      const c=document.querySelector('#left-preview'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data,l=[],r=[];
+      for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++)if(d[(y*c.width+x)*4]<100)(x<c.width/2?l:r).push(y);
+      return Math.abs(l.reduce((a,b)=>a+b,0)/l.length-r.reduce((a,b)=>a+b,0)/r.length);
+    });expect(slope).toBeLessThan(.5);
+  }
+  await page.screenshot({path:'/tmp/folio-tilt-editor.png',fullPage:true});
+  const downloaded=page.waitForEvent('download');await page.locator('#export').click();const output=await fs.readFile(await (await downloaded).path());
+  const pdf=await PDFDocument.load(output);expect(pdf.getPageCount()).toBe(16);for(const p of pdf.getPages())expect(p.getSize()).toEqual({width:380,height:540});
+  const stats=await page.evaluate(async(bytes)=>{
+    const pdfjs=await import('/node_modules/pdfjs-dist/build/pdf.mjs');pdfjs.GlobalWorkerOptions.workerSrc='/node_modules/pdfjs-dist/build/pdf.worker.mjs';const task=pdfjs.getDocument({data:new Uint8Array(bytes)}),doc=await task.promise,result=[];
+    for(let i=1;i<=doc.numPages;i+=2){
+      const p=await doc.getPage(i),v=p.getViewport({scale:1}),c=document.createElement('canvas');c.width=v.width;c.height=v.height;const ctx=c.getContext('2d');await p.render({canvasContext:ctx,viewport:v}).promise;const d=ctx.getImageData(0,0,c.width,c.height).data,l=[],r=[];
+      for(let y=0;y<c.height;y++)for(let x=0;x<c.width;x++)if(d[(y*c.width+x)*4]<100)(x<c.width/2?l:r).push(y);
+      result.push({pixels:l.length+r.length,slope:Math.abs(l.reduce((a,b)=>a+b,0)/l.length-r.reduce((a,b)=>a+b,0)/r.length),leftMargin:Array.from(ctx.getImageData(1,c.height/2,1,1).data).slice(0,3)});
+    }await task.destroy();return result;
+  },Array.from(output));
+  for(const stat of stats){expect(stat.pixels).toBeGreaterThan(200);expect(stat.slope).toBeLessThan(.5);expect(stat.leftMargin).toEqual([255,255,255]);}
+});
